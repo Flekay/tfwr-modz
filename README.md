@@ -17,6 +17,14 @@ Enhanced leaderboard tracking and statistics
 ### [BetterSimulations](./BetterSimulations)
 Dynamic simulation speed control with `set_simulation_speed()` function
 
+### [BetterWorkspace](./BetterWorkspace)
+- Multi-click selection (double-click: word, triple-click: line, quad-click: all)
+- Word navigation with Ctrl+Left/Right
+- Move lines up/down with Ctrl+Shift+Up/Down
+- Duplicate line with Ctrl+D
+- Toggle comments with Ctrl+Q
+- Right-click to copy a variable tooltip's value to clipboard
+
 ### [Debug3](./Debug3)
 Debug utilities and tools
 

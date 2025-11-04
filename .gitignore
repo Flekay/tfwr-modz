@@ -1,0 +1,21 @@
+.vscode/
+.*
+!.gitignore
+libs/
+dump/
+source/
+
+
+# Build results
+bin/
+obj/
+.vs/
+
+# Visual Studio user files
+*.suo
+*.user
+*.sln.DotSettings.user
+
+# NuGet
+*.nupkg
+packages/
