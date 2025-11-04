@@ -40,7 +40,7 @@ public class ResearchMenuPatch
         }
     }
 
-    // Add HOME key functionality and manual drag handling
+    // Add HOME key functionality, zoom keybinds, and manual drag handling
     [HarmonyPostfix]
     [HarmonyPatch("Update")]
     static void Update_Postfix(ResearchMenu __instance)
@@ -48,8 +48,8 @@ public class ResearchMenuPatch
         // Only process if research menu is open
         if (!__instance.IsOpen) return;
 
-        // Check for HOME key press
-        if (OptionHolder.GetKeyCombination("center camera").IsKeyPressed(true))
+        // Check for HOME key press (Center Camera)
+        if (OptionHolder.GetKeyCombination("Center Camera").IsKeyPressed(false))
         {
             if (cachedScrollRect != null && cachedScrollRect.content != null)
             {
@@ -61,6 +61,24 @@ public class ResearchMenuPatch
 
                 Plugin.Log.LogInfo("Research tree centered and zoom reset");
             }
+        }
+
+        // Check for Zoom In keybind
+        if (OptionHolder.GetKeyCombination("Zoom In").IsKeyPressed(false))
+        {
+            // Zoom in by scaling up
+            float currentZoom = __instance.transform.localScale.x;
+            float newZoom = currentZoom * 1.1f;
+            __instance.transform.localScale = Vector3.one * newZoom;
+        }
+
+        // Check for Zoom Out keybind
+        if (OptionHolder.GetKeyCombination("Zoom Out").IsKeyPressed(false))
+        {
+            // Zoom out by scaling down
+            float currentZoom = __instance.transform.localScale.x;
+            float newZoom = currentZoom / 1.1f;
+            __instance.transform.localScale = Vector3.one * newZoom;
         }
 
         // Manual drag handling using raw input

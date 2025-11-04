@@ -56,4 +56,6 @@ Organic, lifelike movement for idle drones
 - Performance friendly
 
 ### [UnrestrictedCanvas](./UnrestrictedCanvas)
-Unrestricted canvas movement and controls
+Unrestricted canvas movement and zoom controls
+- HOME to reset view
+- ZOOM in/out keybindings
