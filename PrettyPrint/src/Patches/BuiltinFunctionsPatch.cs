@@ -24,10 +24,10 @@ namespace PrettyPrint.Patches
 
             if (functionListField?.GetValue(null) is List<PyFunction> functionList)
             {
-                if (!functionList.Any(f => f.functionName == "pretty_print"))
+                if (!functionList.Any(f => f.functionName == "pprint"))
                 {
                     functionList.Add(new PyFunction(
-                        "pretty_print",
+                        "pprint",
                         new Func<List<IPyObject>, Simulation, Execution, int, double>(PrettyPrint),
                         null,
                         false // Will be unlocked via Farm.startUnlocks instead
@@ -42,13 +42,13 @@ namespace PrettyPrint.Patches
         {
             if (parameters.Count == 0)
             {
-                throw new ExecuteException("pretty_print() requires at least one argument", -1, -1);
+                throw new ExecuteException("pprint() requires at least one argument", -1, -1);
             }
 
             StringBuilder output = new StringBuilder();
             foreach (IPyObject param in parameters)
             {
-                output.AppendLine(FormatPrettyPrint(param, 0, null));
+                output.AppendLine(FormatPrettyPrint(param, 0, null, 80));
             }
 
             Logger.Log(output.ToString().TrimEnd());
@@ -56,11 +56,10 @@ namespace PrettyPrint.Patches
             return 0.0;
         }
 
-        private static string FormatPrettyPrint(object obj, int depth, HashSet<object> loopDetector)
+        private static string FormatPrettyPrint(object obj, int depth, HashSet<object> loopDetector, int width)
         {
-            const int indentSize = 2;
-            string indent = new string(' ', depth * indentSize);
-            string nextIndent = new string(' ', (depth + 1) * indentSize);
+            string indent = new string('\t', depth);
+            string nextIndent = new string('\t', depth + 1);
 
             if (depth > 100)
             {
@@ -79,11 +78,12 @@ namespace PrettyPrint.Patches
 
             if (obj is PyDict)
             {
-                if (loopDetector == null)
+                HashSet<object> currentLoopDetector = loopDetector;
+                if (currentLoopDetector == null)
                 {
-                    loopDetector = new HashSet<object>(new ReferenceComparer());
+                    currentLoopDetector = new HashSet<object>(new ReferenceComparer());
                 }
-                loopDetector.Add(obj);
+                currentLoopDetector.Add(obj);
 
                 var dict = ((PyDict)obj).dict;
                 if (dict.Count == 0)
@@ -91,6 +91,7 @@ namespace PrettyPrint.Patches
                     return indent + "{}";
                 }
 
+                // Dicts are always expanded (multiline)
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine(indent + "{");
 
@@ -98,8 +99,8 @@ namespace PrettyPrint.Patches
                 for (int i = 0; i < items.Count; i++)
                 {
                     var kvp = items[i];
-                    string key = FormatKey(kvp.Key);
-                    string value = FormatPrettyPrint(kvp.Value.obj, depth + 1, loopDetector).TrimStart();
+                    string key = FormatKeyInline(kvp.Key);
+                    string value = FormatInline(kvp.Value.obj);
 
                     sb.Append(nextIndent + key + ": " + value);
                     if (i < items.Count - 1)
@@ -118,11 +119,12 @@ namespace PrettyPrint.Patches
 
             if (obj is PyList)
             {
-                if (loopDetector == null)
+                HashSet<object> currentLoopDetector = loopDetector;
+                if (currentLoopDetector == null)
                 {
-                    loopDetector = new HashSet<object>(new ReferenceComparer());
+                    currentLoopDetector = new HashSet<object>(new ReferenceComparer());
                 }
-                loopDetector.Add(obj);
+                currentLoopDetector.Add(obj);
 
                 var list = (PyList)obj;
                 if (list.Count == 0)
@@ -131,24 +133,45 @@ namespace PrettyPrint.Patches
                 }
 
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine(indent + "[");
+                sb.Append(indent + "[");
 
+                // Check if we can fit items on one line
+                StringBuilder testLine = new StringBuilder();
                 for (int i = 0; i < list.Count; i++)
                 {
-                    string value = FormatPrettyPrint(list[i], depth + 1, loopDetector).TrimStart();
-                    sb.Append(nextIndent + value);
+                    testLine.Append(FormatInline(list[i]));
                     if (i < list.Count - 1)
                     {
-                        sb.AppendLine(",");
-                    }
-                    else
-                    {
-                        sb.AppendLine();
+                        testLine.Append(", ");
                     }
                 }
 
-                sb.Append(indent + "]");
-                return sb.ToString();
+                int availableWidth = width - indent.Length - 2;
+                if (testLine.Length <= availableWidth)
+                {
+                    sb.Append(testLine.ToString());
+                    sb.Append("]");
+                    return sb.ToString();
+                }
+                else
+                {
+                    sb.AppendLine();
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        string value = FormatInline(list[i]);
+                        sb.Append(nextIndent + value);
+                        if (i < list.Count - 1)
+                        {
+                            sb.AppendLine(",");
+                        }
+                        else
+                        {
+                            sb.AppendLine();
+                        }
+                    }
+                    sb.Append(indent + "]");
+                    return sb.ToString();
+                }
             }
 
             if (obj is PySet)
@@ -160,25 +183,45 @@ namespace PrettyPrint.Patches
                 }
 
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine(indent + "{");
+                sb.Append(indent + "{");
 
                 var items = set.ToList();
+                StringBuilder testLine = new StringBuilder();
                 for (int i = 0; i < items.Count; i++)
                 {
-                    string value = FormatPrettyPrint(items[i], depth + 1, loopDetector).TrimStart();
-                    sb.Append(nextIndent + value);
+                    testLine.Append(FormatInline(items[i]));
                     if (i < items.Count - 1)
                     {
-                        sb.AppendLine(",");
-                    }
-                    else
-                    {
-                        sb.AppendLine();
+                        testLine.Append(", ");
                     }
                 }
 
-                sb.Append(indent + "}");
-                return sb.ToString();
+                int availableWidth = width - indent.Length - 2;
+                if (testLine.Length <= availableWidth)
+                {
+                    sb.Append(testLine.ToString());
+                    sb.Append("}");
+                    return sb.ToString();
+                }
+                else
+                {
+                    sb.AppendLine();
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        string value = FormatInline(items[i]);
+                        sb.Append(nextIndent + value);
+                        if (i < items.Count - 1)
+                        {
+                            sb.AppendLine(",");
+                        }
+                        else
+                        {
+                            sb.AppendLine();
+                        }
+                    }
+                    sb.Append(indent + "}");
+                    return sb.ToString();
+                }
             }
 
             if (obj is PyTuple)
@@ -190,24 +233,44 @@ namespace PrettyPrint.Patches
                 }
 
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine(indent + "(");
+                sb.Append(indent + "(");
 
+                StringBuilder testLine = new StringBuilder();
                 for (int i = 0; i < tuple.Count; i++)
                 {
-                    string value = FormatPrettyPrint(tuple[i], depth + 1, loopDetector).TrimStart();
-                    sb.Append(nextIndent + value);
+                    testLine.Append(FormatInline(tuple[i]));
                     if (i < tuple.Count - 1)
                     {
-                        sb.AppendLine(",");
-                    }
-                    else
-                    {
-                        sb.AppendLine();
+                        testLine.Append(", ");
                     }
                 }
 
-                sb.Append(indent + ")");
-                return sb.ToString();
+                int availableWidth = width - indent.Length - 2;
+                if (testLine.Length <= availableWidth)
+                {
+                    sb.Append(testLine.ToString());
+                    sb.Append(")");
+                    return sb.ToString();
+                }
+                else
+                {
+                    sb.AppendLine();
+                    for (int i = 0; i < tuple.Count; i++)
+                    {
+                        string value = FormatInline(tuple[i]);
+                        sb.Append(nextIndent + value);
+                        if (i < tuple.Count - 1)
+                        {
+                            sb.AppendLine(",");
+                        }
+                        else
+                        {
+                            sb.AppendLine();
+                        }
+                    }
+                    sb.Append(indent + ")");
+                    return sb.ToString();
+                }
             }
 
             // For primitives and other types, use simple string representation
@@ -240,7 +303,135 @@ namespace PrettyPrint.Patches
             return indent + obj.ToString();
         }
 
-        private static string FormatKey(IPyObject key)
+        private static string FormatInline(object obj)
+        {
+            if (obj == null || obj is PyNone)
+            {
+                return "None";
+            }
+
+            if (obj is PyDict)
+            {
+                var dict = ((PyDict)obj).dict;
+                if (dict.Count == 0)
+                {
+                    return "{}";
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append("{");
+                var items = dict.ToList();
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var kvp = items[i];
+                    string key = FormatKeyInline(kvp.Key);
+                    string value = FormatInline(kvp.Value.obj);
+                    sb.Append(key + ": " + value);
+                    if (i < items.Count - 1)
+                    {
+                        sb.Append(", ");
+                    }
+                }
+                sb.Append("}");
+                return sb.ToString();
+            }
+
+            if (obj is PyList)
+            {
+                var list = (PyList)obj;
+                if (list.Count == 0)
+                {
+                    return "[]";
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append("[");
+                for (int i = 0; i < list.Count; i++)
+                {
+                    sb.Append(FormatInline(list[i]));
+                    if (i < list.Count - 1)
+                    {
+                        sb.Append(", ");
+                    }
+                }
+                sb.Append("]");
+                return sb.ToString();
+            }
+
+            if (obj is PySet)
+            {
+                var set = (PySet)obj;
+                if (set.Count == 0)
+                {
+                    return "set()";
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append("{");
+                var items = set.ToList();
+                for (int i = 0; i < items.Count; i++)
+                {
+                    sb.Append(FormatInline(items[i]));
+                    if (i < items.Count - 1)
+                    {
+                        sb.Append(", ");
+                    }
+                }
+                sb.Append("}");
+                return sb.ToString();
+            }
+
+            if (obj is PyTuple)
+            {
+                var tuple = (PyTuple)obj;
+                if (tuple.Count == 0)
+                {
+                    return "()";
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append("(");
+                for (int i = 0; i < tuple.Count; i++)
+                {
+                    sb.Append(FormatInline(tuple[i]));
+                    if (i < tuple.Count - 1)
+                    {
+                        sb.Append(", ");
+                    }
+                }
+                sb.Append(")");
+                return sb.ToString();
+            }
+
+            if (obj is PyString)
+            {
+                return "\"" + ((PyString)obj).str + "\"";
+            }
+
+            if (obj is PyNumber)
+            {
+                return ((PyNumber)obj).num.ToString();
+            }
+
+            if (obj is PyBool)
+            {
+                return ((PyBool)obj).num != 0.0 ? "True" : "False";
+            }
+
+            try
+            {
+                var method = typeof(CodeUtilities).GetMethod("ToNiceString", BindingFlags.Public | BindingFlags.Static);
+                if (method != null)
+                {
+                    return (string)method.Invoke(null, new object[] { obj, 0, null, false });
+                }
+            }
+            catch { }
+
+            return obj.ToString();
+        }
+
+        private static string FormatKeyInline(IPyObject key)
         {
             if (key is PyString)
             {
@@ -249,6 +440,10 @@ namespace PrettyPrint.Patches
             if (key is PyNumber)
             {
                 return ((PyNumber)key).num.ToString();
+            }
+            if (key is PyTuple)
+            {
+                return FormatInline(key);
             }
             return key.ToString();
         }

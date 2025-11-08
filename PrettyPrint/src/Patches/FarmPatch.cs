@@ -16,9 +16,9 @@ namespace PrettyPrint.Patches
 
             if (startUnlocksField?.GetValue(null) is List<string> startUnlocks)
             {
-                if (!startUnlocks.Contains("pretty_print"))
+                if (!startUnlocks.Contains("pprint"))
                 {
-                    startUnlocks.Add("pretty_print");
+                    startUnlocks.Add("pprint");
                 }
             }
         }
