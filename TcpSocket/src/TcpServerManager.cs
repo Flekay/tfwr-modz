@@ -244,6 +244,47 @@ namespace TcpSocket
                         // Execute on main thread with result
                         return ExecuteQueryCommand("getcode", parts[1]);
 
+                    case "getoutput":
+                        // Get console output
+                        return ExecuteQueryCommand("getoutput", "");
+
+                    case "clearoutput":
+                        // Clear console output
+                        return QueueCommand("clearoutput", "");
+
+                    case "getfarm":
+                        // Get farm state as JSON
+                        return ExecuteQueryCommand("getfarm", "");
+
+                    case "getunlocks":
+                        // Get unlocks as JSON
+                        return ExecuteQueryCommand("getunlocks", "");
+
+                    case "getwindowposition":
+                        // getwindowposition window_name
+                        if (parts.Length < 2)
+                        {
+                            return "ERROR: getwindowposition requires window_name";
+                        }
+                        return ExecuteQueryCommand("getwindowposition", parts[1]);
+
+                    case "stepbystep":
+                        // stepbystep window_name
+                        if (parts.Length < 2)
+                        {
+                            return "ERROR: stepbystep requires window_name";
+                        }
+                        return QueueCommand("stepbystep", parts[1]);
+
+                    case "movewindow":
+                        // movewindow window_name x y
+                        if (parts.Length < 3)
+                        {
+                            return "ERROR: movewindow requires window_name x y";
+                        }
+                        // Combine parts[1] (window_name) and parts[2] (x y)
+                        return QueueCommand("movewindow", parts[1] + " " + parts[2]);
+
                     case "exitgame":
                         return QueueCommand("exitgame", "");
 
