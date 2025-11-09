@@ -1,6 +1,7 @@
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -9,6 +10,21 @@ namespace BetterWorkspace.Patches;
 [HarmonyPatch(typeof(CodeInputField))]
 public static class MoveLineUpPatch
 {
+    // Block Shift+Ctrl+UpArrow from extending selection
+    [HarmonyPrefix]
+    [HarmonyPatch("OnUpdateSelected")]
+    static bool OnUpdateSelected_Prefix(CodeInputField __instance, BaseEventData eventData)
+    {
+        // Check if our move keybind is pressed
+        var moveLineUpKeyCombination = OptionHolder.GetKeyCombination("Move Line Up");
+        if (moveLineUpKeyCombination.IsKeyPressed(false)) // Check without consume
+        {
+            // Block OnUpdateSelected so it doesn't process Shift+Arrow navigation
+            return false;
+        }
+        return true;
+    }
+
     [HarmonyPrefix]
     [HarmonyPatch("LateUpdate")]
     static bool LateUpdate_Prefix(CodeInputField __instance)
@@ -36,14 +52,19 @@ public static class MoveLineUpPatch
         int stringPosition = (int)stringPositionField.GetValue(inputField);
         int stringSelectPosition = (int)stringSelectPositionField.GetValue(inputField);
 
-        // Reset selection to ONLY the cursor position
-        stringSelectPositionField.SetValue(inputField, stringPosition);
+        int selectionStart = Mathf.Min(stringPosition, stringSelectPosition);
+        int selectionEnd = Mathf.Max(stringPosition, stringSelectPosition);
 
-        int selectionStart = stringPosition;
-        int selectionEnd = stringPosition;
-
+        // Get all selected lines
         int startLine = GetLineNumber(text, selectionStart);
-        int endLine = startLine; // Only move ONE line
+        int endLine = GetLineNumber(text, selectionEnd);
+
+        // If selection ends at the start of a line (just after \n), don't include that line
+        if (selectionEnd > 0 && selectionEnd < text.Length &&
+            text[selectionEnd - 1] == '\n' && selectionStart != selectionEnd)
+        {
+            endLine = Mathf.Max(startLine, endLine - 1);
+        }
 
         if (startLine == 0)
         {
@@ -53,63 +74,33 @@ public static class MoveLineUpPatch
         string[] lines = text.Split('\n');
         if (endLine >= lines.Length) return;
 
-        // Calculate offset BEFORE swapping (using original line positions)
+        // Get the line above that we'll swap with
         string lineAbove = lines[startLine - 1];
-        int lineAboveLength = lineAbove.Length + 1; // +1 for newline
 
-        // Move all selected lines up by swapping with the line above
-        string temp = lines[startLine - 1];
+        // Move the line above to AFTER the selected block
+        // This is simpler than moving the whole block up
+        List<string> newLines = new List<string>(lines);
+        newLines.RemoveAt(startLine - 1);
+        newLines.Insert(endLine, lineAbove);
 
-        for (int i = startLine - 1; i < endLine; i++)
-        {
-            lines[i] = lines[i + 1];
-        }
-        lines[endLine] = temp;
-
-        string newText = string.Join("\n", lines);
-
+        string newText = string.Join("\n", newLines);
         inputField.text = newText;
 
-        // Calculate new positions based on line positions in the new text
-        int newStartLinePos = 0;
-        for (int i = 0; i < startLine - 1; i++)
-        {
-            newStartLinePos += lines[i].Length + 1; // +1 for newline
-        }
+        // Calculate new selection positions
+        // The selected lines moved up by the length of the line above + 1 (for \n)
+        int offset = -(lineAbove.Length + 1);
 
-        // Calculate offset from start of original startLine to selectionStart
-        int oldStartLinePos = 0;
-        for (int i = 0; i < startLine; i++)
-        {
-            oldStartLinePos += text.Split('\n')[i].Length + 1;
-        }
-        int offsetInStartLine = selectionStart - oldStartLinePos;
-        int offsetInEndLine = selectionEnd - oldStartLinePos;
-
-        // Calculate how many characters into the moved block each position is
-        int charsFromBlockStart_Start = selectionStart - oldStartLinePos;
-        int charsFromBlockStart_End = selectionEnd - oldStartLinePos;
-
-        int newStart = newStartLinePos + charsFromBlockStart_Start;
-        int newEnd = newStartLinePos + charsFromBlockStart_End;
+        int newStart = selectionStart + offset;
+        int newEnd = selectionEnd + offset;
 
         newStart = Mathf.Max(0, Mathf.Min(newText.Length, newStart));
         newEnd = Mathf.Max(0, Mathf.Min(newText.Length, newEnd));
 
-        stringPositionField.SetValue(inputField, newStart);
-        stringSelectPositionField.SetValue(inputField, newStart);
+        stringPositionField.SetValue(inputField, stringPosition < stringSelectPosition ? newStart : newEnd);
+        stringSelectPositionField.SetValue(inputField, stringPosition < stringSelectPosition ? newEnd : newStart);
 
-        // Force caret update to make it visible
         inputField.ForceLabelUpdate();
-
-        // Reset caret blink to make it visible immediately
-        var caretBlinkRateField = AccessTools.Field(typeof(TMP_InputField), "m_CaretBlinkRate");
-        if (caretBlinkRateField != null)
-        {
-            float blinkRate = (float)caretBlinkRateField.GetValue(inputField);
-            caretBlinkRateField.SetValue(inputField, 0f);
-            caretBlinkRateField.SetValue(inputField, blinkRate);
-        }
+        ClickSelectionPatch.ForceCaretUpdate(inputField);
     }
 
     private static int GetLineNumber(string text, int position)

@@ -1,6 +1,7 @@
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -9,6 +10,21 @@ namespace BetterWorkspace.Patches;
 [HarmonyPatch(typeof(CodeInputField))]
 public static class MoveLineDownPatch
 {
+    // Block Shift+Ctrl+DownArrow from extending selection
+    [HarmonyPrefix]
+    [HarmonyPatch("OnUpdateSelected")]
+    static bool OnUpdateSelected_Prefix(CodeInputField __instance, BaseEventData eventData)
+    {
+        // Check if our move keybind is pressed
+        var moveLineDownKeyCombination = OptionHolder.GetKeyCombination("Move Line Down");
+        if (moveLineDownKeyCombination.IsKeyPressed(false)) // Check without consume
+        {
+            // Block OnUpdateSelected so it doesn't process Shift+Arrow navigation
+            return false;
+        }
+        return true;
+    }
+
     [HarmonyPrefix]
     [HarmonyPatch("LateUpdate")]
     static bool LateUpdate_Prefix(CodeInputField __instance)
@@ -36,16 +52,16 @@ public static class MoveLineDownPatch
         int stringPosition = (int)stringPositionField.GetValue(inputField);
         int stringSelectPosition = (int)stringSelectPositionField.GetValue(inputField);
 
-        int actualPosition = stringPosition; // The "real" cursor position
+        int selectionStart = Mathf.Min(stringPosition, stringSelectPosition);
+        int selectionEnd = Mathf.Max(stringPosition, stringSelectPosition);
 
-        int selectionStart = actualPosition;
-        int selectionEnd = actualPosition;
-
+        // Get all selected lines
         int startLine = GetLineNumber(text, selectionStart);
         int endLine = GetLineNumber(text, selectionEnd);
 
-        // If selectionEnd is at the start of a line, don't include that line
-        if (selectionEnd > 0 && selectionEnd < text.Length && text[selectionEnd - 1] == '\n' && selectionStart != selectionEnd)
+        // If selection ends at the start of a line (just after \n), don't include that line
+        if (selectionEnd > 0 && selectionEnd < text.Length &&
+            text[selectionEnd - 1] == '\n' && selectionStart != selectionEnd)
         {
             endLine = Mathf.Max(startLine, endLine - 1);
         }
@@ -57,41 +73,33 @@ public static class MoveLineDownPatch
             return; // Already at bottom
         }
 
-        // Calculate offset BEFORE swapping
+        // Get the line below that we'll swap with
         string lineBelow = lines[endLine + 1];
-        int lineBelowLength = lineBelow.Length + 1; // +1 for newline
 
-        // Move all selected lines down by swapping with the line below
-        string temp = lines[endLine + 1];
+        // Move the line below to BEFORE the selected block
+        // This is simpler than moving the whole block down
+        List<string> newLines = new List<string>(lines);
+        newLines.RemoveAt(endLine + 1);
+        newLines.Insert(startLine, lineBelow);
 
-        for (int i = endLine + 1; i > startLine; i--)
-        {
-            lines[i] = lines[i - 1];
-        }
-        lines[startLine] = temp;
-
-        string newText = string.Join("\n", lines);
+        string newText = string.Join("\n", newLines);
         inputField.text = newText;
 
-        // Adjust caret position
-        int offset = lineBelowLength;
-        int newStart = Mathf.Min(newText.Length, selectionStart + offset);
-        int newEnd = Mathf.Min(newText.Length, selectionEnd + offset);
+        // Calculate new selection positions
+        // The selected lines moved down by the length of the line below + 1 (for \n)
+        int offset = lineBelow.Length + 1;
 
-        stringPositionField.SetValue(inputField, newStart);
-        stringSelectPositionField.SetValue(inputField, newStart);
+        int newStart = selectionStart + offset;
+        int newEnd = selectionEnd + offset;
 
-        // Force caret update to make it visible
+        newStart = Mathf.Max(0, Mathf.Min(newText.Length, newStart));
+        newEnd = Mathf.Max(0, Mathf.Min(newText.Length, newEnd));
+
+        stringPositionField.SetValue(inputField, stringPosition < stringSelectPosition ? newStart : newEnd);
+        stringSelectPositionField.SetValue(inputField, stringPosition < stringSelectPosition ? newEnd : newStart);
+
         inputField.ForceLabelUpdate();
-
-        // Reset caret blink to make it visible immediately
-        var caretBlinkRateField = AccessTools.Field(typeof(TMP_InputField), "m_CaretBlinkRate");
-        if (caretBlinkRateField != null)
-        {
-            float blinkRate = (float)caretBlinkRateField.GetValue(inputField);
-            caretBlinkRateField.SetValue(inputField, 0f);
-            caretBlinkRateField.SetValue(inputField, blinkRate);
-        }
+        ClickSelectionPatch.ForceCaretUpdate(inputField);
     }
 
     private static int GetLineNumber(string text, int position)

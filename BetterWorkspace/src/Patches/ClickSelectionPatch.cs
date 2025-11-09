@@ -56,6 +56,47 @@ public static class ClickSelectionPatch
         return char.IsLetterOrDigit(c) || c == '_';
     }
 
+    /// <summary>
+    /// Forces an immediate visual caret update for the input field.
+    /// This is needed when programmatically setting the cursor position.
+    /// </summary>
+    public static void ForceCaretUpdate(CodeInputField inputField)
+    {
+        // Force the text component to update its geometry
+        var textComponent = inputField.textComponent;
+        if (textComponent != null)
+        {
+            textComponent.SetVerticesDirty();
+            textComponent.SetLayoutDirty();
+        }
+    }
+
+    // Coroutine to update caret in the next frame
+    private static System.Collections.IEnumerator UpdateCaretNextFrame(CodeInputField inputField, int position)
+    {
+        // Wait for end of frame to ensure all Unity updates are done
+        yield return new UnityEngine.WaitForEndOfFrame();
+
+        var stringPositionField = AccessTools.Property(typeof(CodeInputField), "stringPositionInternal");
+        var stringSelectPositionField = AccessTools.Property(typeof(CodeInputField), "stringSelectPositionInternal");
+
+        // Set positions again to ensure they stick
+        stringPositionField.SetValue(inputField, position);
+        stringSelectPositionField.SetValue(inputField, position);
+
+        // Force all the update methods
+        inputField.ForceLabelUpdate();
+
+        // Try to call UpdateGeometry to force caret redraw
+        var updateGeometryMethod = AccessTools.Method(typeof(TMP_InputField), "UpdateGeometry");
+        if (updateGeometryMethod != null)
+        {
+            updateGeometryMethod.Invoke(inputField, null);
+        }
+
+        Plugin.Log.LogInfo($"UpdateCaretNextFrame: Caret updated to position {position}");
+    }
+
     public static void OnMouseButtonReleased()
     {
         // Reset mode on mouse release
@@ -97,42 +138,11 @@ public static class ClickSelectionPatch
             __instance.ActivateInputField();
         }
 
-        // Get click position
-        var textComponentField = AccessTools.Field(typeof(CodeInputField), "m_TextComponent");
-        var textComponent = (TMP_Text)textComponentField.GetValue(__instance);
-
-        CaretPosition caretPos = CaretPosition.Left;
-        Vector3 position = eventData.position;
-        object[] parameters = new object[] { textComponent, position, eventData.pressEventCamera, caretPos };
-        var getCursorMethod = typeof(TMP_TextUtilities).GetMethod(
-            "GetCursorIndexFromPosition",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static,
-            null,
-            new System.Type[] { typeof(TMP_Text), typeof(Vector3), typeof(Camera), typeof(CaretPosition).MakeByRefType() },
-            null
-        );
-        int cursorIndexFromPosition = (int)getCursorMethod.Invoke(null, parameters);
-        caretPos = (CaretPosition)parameters[3];
-
+        // Get click position using improved cursor detection
+        int stringIndex = ImprovedCursorDetectionPatch.GetCursorPosition(__instance, eventData);
         string text = __instance.text;
-        int stringIndex;
 
-        if (cursorIndexFromPosition >= 0 && cursorIndexFromPosition < textComponent.textInfo.characterCount)
-        {
-            if (caretPos == CaretPosition.Left)
-            {
-                stringIndex = textComponent.textInfo.characterInfo[cursorIndexFromPosition].index;
-            }
-            else
-            {
-                stringIndex = textComponent.textInfo.characterInfo[cursorIndexFromPosition].index +
-                             textComponent.textInfo.characterInfo[cursorIndexFromPosition].stringLength;
-            }
-        }
-        else
-        {
-            stringIndex = text.Length;
-        }
+        Plugin.Log.LogInfo($"OnPointerDown: stringIndex from GetCursorPosition = {stringIndex}, lastClickPosition = {lastClickPosition}");
 
         var stringPositionField = AccessTools.Property(typeof(CodeInputField), "stringPositionInternal");
         var stringSelectPositionField = AccessTools.Property(typeof(CodeInputField), "stringSelectPositionInternal");
@@ -151,16 +161,30 @@ public static class ClickSelectionPatch
         }
 
         lastClickTime = currentTime;
-        lastClickPosition = stringIndex;
 
         // Determine mode based on click count
         if (clickCount == 1)
         {
-            // Single click - let original handler deal with it
+            // Single click - handle it ourselves with improved cursor detection
             currentMode = SelectionMode.None;
-            return true; // Allow original OnPointerDown to handle single clicks
+
+            // Set the internal fields directly
+            stringPositionField.SetValue(__instance, stringIndex);
+            stringSelectPositionField.SetValue(__instance, stringIndex);
+
+            // Force immediate visual caret update
+            ForceCaretUpdate(__instance);
+
+            // Update lastClickPosition AFTER setting the position
+            lastClickPosition = stringIndex;
+
+            return false; // Block original to use our improved cursor position
         }
-        else if (clickCount == 2)
+
+        // Update lastClickPosition for multi-click scenarios
+        lastClickPosition = stringIndex;
+
+        if (clickCount == 2)
         {
             // Double click - select word
             currentMode = SelectionMode.Word;
@@ -212,57 +236,33 @@ public static class ClickSelectionPatch
             return false;
         }
 
+        // Declare shared variables at the top
+        var stringPositionField = AccessTools.Property(typeof(CodeInputField), "stringPositionInternal");
+        var stringSelectPositionField = AccessTools.Property(typeof(CodeInputField), "stringSelectPositionInternal");
+
         if (currentMode == SelectionMode.None)
         {
-            return true; // Let normal drag through
+            // Normal drag mode - but use our improved cursor detection
+            int stringIndex = ImprovedCursorDetectionPatch.GetCursorPosition(__instance, eventData);
+
+            // Update selection to reflect drag (stringPosition is the anchor point)
+            stringSelectPositionField.SetValue(__instance, stringIndex);
+
+            __instance.ForceLabelUpdate();
+
+            return false; // Block original drag to use our improved detection
         }
 
         // We're in Word or Line mode - handle drag ourselves and block original
-        // Get current mouse position
-        var textComponentField = AccessTools.Field(typeof(CodeInputField), "m_TextComponent");
-        var textComponent = (TMP_Text)textComponentField.GetValue(__instance);
-
-        CaretPosition caretPos = CaretPosition.Left;
-        Vector3 position = eventData.position;
-        object[] parameters = new object[] { textComponent, position, eventData.pressEventCamera, caretPos };
-        var getCursorMethod = typeof(TMP_TextUtilities).GetMethod(
-            "GetCursorIndexFromPosition",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static,
-            null,
-            new System.Type[] { typeof(TMP_Text), typeof(Vector3), typeof(Camera), typeof(CaretPosition).MakeByRefType() },
-            null
-        );
-        int cursorIndexFromPosition = (int)getCursorMethod.Invoke(null, parameters);
-        caretPos = (CaretPosition)parameters[3];
-
+        // Get current mouse position using improved cursor detection
+        int dragStringIndex = ImprovedCursorDetectionPatch.GetCursorPosition(__instance, eventData);
         string text = __instance.text;
-        int stringIndex;
-
-        if (cursorIndexFromPosition >= 0 && cursorIndexFromPosition < textComponent.textInfo.characterCount)
-        {
-            if (caretPos == CaretPosition.Left)
-            {
-                stringIndex = textComponent.textInfo.characterInfo[cursorIndexFromPosition].index;
-            }
-            else
-            {
-                stringIndex = textComponent.textInfo.characterInfo[cursorIndexFromPosition].index +
-                             textComponent.textInfo.characterInfo[cursorIndexFromPosition].stringLength;
-            }
-        }
-        else
-        {
-            stringIndex = text.Length;
-        }
-
-        var stringPositionField = AccessTools.Property(typeof(CodeInputField), "stringPositionInternal");
-        var stringSelectPositionField = AccessTools.Property(typeof(CodeInputField), "stringSelectPositionInternal");
 
         if (currentMode == SelectionMode.Word)
         {
             // Word-by-word selection
-            int wordStart = stringIndex;
-            int wordEnd = stringIndex;
+            int wordStart = dragStringIndex;
+            int wordEnd = dragStringIndex;
 
             while (wordStart > 0 && IsWordChar(text[wordStart - 1]))
             {
@@ -276,12 +276,12 @@ public static class ClickSelectionPatch
 
             int newStart, newEnd;
 
-            if (stringIndex >= initialWordEnd)
+            if (dragStringIndex >= initialWordEnd)
             {
                 newStart = initialWordStart;
                 newEnd = wordEnd;
             }
-            else if (stringIndex <= initialWordStart)
+            else if (dragStringIndex <= initialWordStart)
             {
                 newStart = wordStart;
                 newEnd = initialWordEnd;
@@ -298,13 +298,13 @@ public static class ClickSelectionPatch
         else if (currentMode == SelectionMode.Line)
         {
             // Line-by-line selection
-            int currentLineStart = stringIndex;
+            int currentLineStart = dragStringIndex;
             while (currentLineStart > 0 && text[currentLineStart - 1] != '\n')
             {
                 currentLineStart--;
             }
 
-            int currentLineEnd = stringIndex;
+            int currentLineEnd = dragStringIndex;
             while (currentLineEnd < text.Length && text[currentLineEnd] != '\n')
             {
                 currentLineEnd++;

@@ -167,6 +167,9 @@ public static class CommentTogglePatch
         // Force caret update and make it visible even with selection
         inputField.ForceLabelUpdate();
 
+        // Force immediate visual caret update
+        ClickSelectionPatch.ForceCaretUpdate(inputField);
+
         // Activate caret rendering even with selection
         var caretBlinkRateField = AccessTools.Field(typeof(TMP_InputField), "m_CaretBlinkRate");
         if (caretBlinkRateField != null)
