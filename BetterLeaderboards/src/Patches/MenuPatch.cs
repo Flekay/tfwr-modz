@@ -9,6 +9,7 @@ public class MenuPatch
     private static LeaderboardDataManager dataManager;
     private static LeaderboardOverviewUI overviewUI;
     private static bool isInitialized = false;
+    public static Menu MenuInstance { get; private set; }
 
     [HarmonyPostfix]
     [HarmonyPatch("Start")]
@@ -17,6 +18,9 @@ public class MenuPatch
         if (isInitialized) return;
 
         Plugin.Log.LogInfo("Menu.Start postfix - initializing leaderboard overview");
+
+        // Store Menu instance reference
+        MenuInstance = __instance;
 
         // Create data manager GameObject
         var managerObj = new GameObject("LeaderboardDataManager");

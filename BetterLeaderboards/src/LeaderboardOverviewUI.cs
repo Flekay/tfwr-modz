@@ -19,28 +19,59 @@ public class LeaderboardOverviewUI : MonoBehaviour
     private bool isVisible = false;
     private bool isOffline = false;
 
-    // Hardcoded leaderboard icon mapping (based on actual log output)
+    // Track if we opened a leaderboard from the overview
+    public static bool IsViewingFromOverview { get; set; } = false;
+
+    // Icon mapping: search keyword -> icon path (item.X or unlock.X)
     private static readonly Dictionary<string, string> LeaderboardIcons = new Dictionary<string, string>
     {
-        { "carrots", "carrot" },
-        { "carrots_single", "carrot" },
-        { "pumpkins", "pumpkin" },
-        { "pumpkins_single", "pumpkin" },
-        { "wood", "wood" },
-        { "wood_single", "wood" },
-        { "hay", "hay" },
-        { "hay_single", "hay" },
-        { "sunflowers", "gold" },
-        { "sunflowers_single", "gold" },
-        { "maze", "carrot" },
-        { "maze_single", "carrot" },
-        { "cactus", "cactus" },
-        { "cactus_single", "cactus" },
-        { "dinosaur", "bone" },
-        { "fastest_reset", "leaderboard_unlock" } // Use unlock icon as main icon
+        { "carrot", "unlock.carrots" },
+        { "pumpkin", "item.pumpkin" },
+        { "wood", "item.wood" },
+        { "hay", "item.hay" },
+        { "sunflower", "unlock.sunflowers" },
+        { "maze", "unlock.mazes" },
+        { "cactus", "unlock.cactus" },
+        { "dinosaur", "item.bone" },
+        { "poly", "unlock.polyculture" },
+        { "weird", "item.weird_substance" },
+        { "reset", "unlock.leaderboard" }
     };
 
     public event Action OnReloadRequested;
+
+    private void LogAllAvailableIcons()
+    {
+        Plugin.Log.LogInfo("=== Available Item Icons ===");
+        try
+        {
+            var itemSprites = Resources.LoadAll<Sprite>("ItemTextures");
+            foreach (var sprite in itemSprites)
+            {
+                Plugin.Log.LogInfo($"  ItemTextures/{sprite.name}");
+            }
+            Plugin.Log.LogInfo($"Total item icons: {itemSprites.Length}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"Failed to load item icons: {ex.Message}");
+        }
+
+        Plugin.Log.LogInfo("=== Available Unlock Icons ===");
+        try
+        {
+            var unlockSprites = Resources.LoadAll<Sprite>("UnlockTextures");
+            foreach (var sprite in unlockSprites)
+            {
+                Plugin.Log.LogInfo($"  UnlockTextures/{sprite.name}");
+            }
+            Plugin.Log.LogInfo($"Total unlock icons: {unlockSprites.Length}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"Failed to load unlock icons: {ex.Message}");
+        }
+    }
 
     private void OnReloadClicked()
     {
@@ -57,6 +88,112 @@ public class LeaderboardOverviewUI : MonoBehaviour
         ShowLoadingBar(true);
 
         OnReloadRequested?.Invoke();
+    }
+
+    private void OnLeaderboardEntryClicked(LeaderboardDataManager.LeaderboardData data)
+    {
+        Plugin.Log.LogInfo($"Leaderboard entry clicked: {data.LeaderboardName}");
+
+        try
+        {
+            // Find the LeaderboardManager
+            var leaderboardManager = GameObject.FindObjectOfType<LeaderboardManager>();
+            if (leaderboardManager == null)
+            {
+                Plugin.Log.LogWarning("Could not find LeaderboardManager");
+                return;
+            }
+
+            // Find the Menu
+            var menu = GameObject.FindObjectOfType<Menu>();
+            if (menu == null)
+            {
+                Plugin.Log.LogWarning("Could not find Menu");
+                return;
+            }
+
+            // Use reflection to access the leaderboard screen and leaderboard components
+            var leaderboardManagerType = typeof(LeaderboardManager);
+            var leaderboardScreenField = leaderboardManagerType.GetField("leaderboardScreen", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var leaderboardField = leaderboardManagerType.GetField("leaderboard", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var leaderboardTitleField = leaderboardManagerType.GetField("leaderboardTitle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var finishTimeTextField = leaderboardManagerType.GetField("finishTimeText", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var runCancelledField = leaderboardManagerType.GetField("runCancelled", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+            if (leaderboardScreenField == null || leaderboardField == null)
+            {
+                Plugin.Log.LogWarning("Could not find required fields via reflection");
+                return;
+            }
+
+            var leaderboardScreen = leaderboardScreenField.GetValue(leaderboardManager) as GameObject;
+            var leaderboard = leaderboardField.GetValue(leaderboardManager) as Leaderboard;
+            var leaderboardTitle = leaderboardTitleField?.GetValue(leaderboardManager) as TMPro.TextMeshProUGUI;
+            var finishTimeText = finishTimeTextField?.GetValue(leaderboardManager) as TMPro.TextMeshProUGUI;
+            var runCancelled = runCancelledField?.GetValue(leaderboardManager) as GameObject;
+
+            if (leaderboardScreen != null && leaderboard != null)
+            {
+                Plugin.Log.LogInfo($"Opening leaderboard view for: {data.LeaderboardName}");
+
+                // Set flag that we're viewing from overview
+                IsViewingFromOverview = true;
+
+                // Hide our overview UI
+                Hide();
+
+                // Use reflection to get the menu GameObject from Menu
+                var menuType = typeof(Menu);
+                var menuField = menuType.GetField("menu", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var menuGameObject = menuField?.GetValue(menu) as GameObject;
+
+                // Close the menu (like when starting a game)
+                if (menuGameObject != null)
+                {
+                    menuGameObject.SetActive(false);
+                    Plugin.Log.LogInfo("Menu closed");
+                }
+
+                // Make sure workspace is not active (we're not in a game)
+                MainSim.Inst.workspace.gameObject.SetActive(false);
+
+                // Show leaderboard screen
+                leaderboardScreen.SetActive(true);
+
+                // Set title
+                if (leaderboardTitle != null)
+                {
+                    leaderboardTitle.text = CodeUtilities.ToUpperSnake(data.LeaderboardName);
+                }
+
+                // Set finish time (show current best if available)
+                if (finishTimeText != null && data.HasPlayerEntry)
+                {
+                    finishTimeText.text = LeaderboardManager.StringFromTimeSpan(TimeSpan.FromMilliseconds(data.PlayerScore));
+                }
+                else if (finishTimeText != null)
+                {
+                    finishTimeText.text = "-";
+                }
+
+                // Hide "run cancelled" message
+                if (runCancelled != null)
+                {
+                    runCancelled.SetActive(false);
+                }
+
+                // Fill the leaderboard with data (score 0 means just view, not submit)
+                leaderboard.FillLeaderboard(data.SteamLeaderboardName, 0);
+            }
+            else
+            {
+                Plugin.Log.LogWarning("Leaderboard screen or leaderboard component not found");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogError($"Error opening leaderboard: {ex.Message}\n{ex.StackTrace}");
+        }
     }
 
     public void ShowLoadingBar(bool show)
@@ -84,6 +221,9 @@ public class LeaderboardOverviewUI : MonoBehaviour
     public void CreateUI(Canvas parentCanvas)
     {
         Plugin.Log.LogInfo("Creating leaderboard overview UI...");
+
+        // Log all available icons for debugging
+        LogAllAvailableIcons();
 
         // Create main panel
         panel = new GameObject("LeaderboardOverviewPanel");
@@ -320,12 +460,28 @@ public class LeaderboardOverviewUI : MonoBehaviour
         entryRect.sizeDelta = new Vector2(0, 65); // Taller for M3 design
 
         var entryImage = entryObj.AddComponent<Image>();
-        // M3: Subtle elevation with slight border
-        int index = entryObjects.Count;
-        if (index % 2 == 0)
-            entryImage.color = new Color(0.14f, 0.14f, 0.20f, 1f);
-        else
-            entryImage.color = new Color(0.12f, 0.12f, 0.18f, 1f);
+        // Single color for all entries - makes hover effect more visible
+        Color normalColor = new Color(0.13f, 0.13f, 0.19f, 1f);
+        entryImage.color = normalColor;
+
+        // Add Button component for click interaction
+        var button = entryObj.AddComponent<Button>();
+        button.targetGraphic = entryImage;
+        button.transition = Selectable.Transition.ColorTint;
+
+        // Set color block for hover effect
+        var colors = button.colors;
+        colors.normalColor = Color.white;
+        colors.highlightedColor = new Color(1.20f, 1.20f, 1.20f, 1f); // 20% lighter on hover
+        colors.pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f); // Darker on press
+        colors.selectedColor = colors.normalColor;
+        colors.disabledColor = new Color(0.8f, 0.8f, 0.8f, 0.5f);
+        colors.colorMultiplier = 1f;
+        colors.fadeDuration = 0.1f; // Faster transition
+        button.colors = colors;
+
+        // Add click handler to open leaderboard
+        button.onClick.AddListener(() => OnLeaderboardEntryClicked(data));
 
         // M3: Add rounded corners effect with padding
         var padding = 4f;
@@ -344,22 +500,44 @@ public class LeaderboardOverviewUI : MonoBehaviour
         iconImage.color = new Color(0.2f, 0.22f, 0.28f, 1f); // M3 surface variant
         iconImage.preserveAspect = true;
 
-        // Try to load icon from hardcoded mapping
+        // Try to load icon using contains logic
         bool iconLoaded = false;
-        if (LeaderboardIcons.TryGetValue(data.LeaderboardName, out string iconName))
+        string matchedKey = null;
+        string iconPath = null;
+
+        // Find matching icon by checking if leaderboard name contains any key
+        foreach (var kvp in LeaderboardIcons)
+        {
+            if (data.LeaderboardName.ToLower().Contains(kvp.Key))
+            {
+                matchedKey = kvp.Key;
+                iconPath = kvp.Value;
+                break;
+            }
+        }
+
+        if (iconPath != null)
         {
             try
             {
                 Sprite sprite = null;
+                string resourcePath = null;
 
-                // Special handling for unlock icons
-                if (iconName == "leaderboard_unlock")
+                // Parse icon path (format: "item.X" or "unlock.X")
+                if (iconPath.StartsWith("item."))
                 {
-                    sprite = Resources.Load<Sprite>("UnlockTextures/leaderboard");
+                    string itemName = iconPath.Substring(5); // Remove "item."
+                    resourcePath = "ItemTextures/" + itemName;
                 }
-                else
+                else if (iconPath.StartsWith("unlock."))
                 {
-                    sprite = Resources.Load<Sprite>("ItemTextures/" + iconName);
+                    string unlockName = iconPath.Substring(7); // Remove "unlock."
+                    resourcePath = "UnlockTextures/" + unlockName;
+                }
+
+                if (resourcePath != null)
+                {
+                    sprite = Resources.Load<Sprite>(resourcePath);
                 }
 
                 if (sprite != null)
@@ -367,13 +545,21 @@ public class LeaderboardOverviewUI : MonoBehaviour
                     iconImage.sprite = sprite;
                     iconImage.color = Color.white;
                     iconLoaded = true;
-                    // Plugin.Log.LogInfo($"Loaded icon for {data.LeaderboardName}: {iconName}");
+                    Plugin.Log.LogInfo($"Loaded icon for '{data.LeaderboardName}' (matched '{matchedKey}'): {resourcePath}");
+                }
+                else
+                {
+                    Plugin.Log.LogWarning($"Sprite not found for '{data.LeaderboardName}' at: {resourcePath}");
                 }
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogWarning($"Failed to load icon {iconName} for {data.LeaderboardName}: {ex.Message}");
+                Plugin.Log.LogWarning($"Failed to load icon for {data.LeaderboardName}: {ex.Message}");
             }
+        }
+        else
+        {
+            Plugin.Log.LogInfo($"No icon mapping found for: {data.LeaderboardName}");
         }
 
         // Show first letters as fallback
@@ -467,6 +653,8 @@ public class LeaderboardOverviewUI : MonoBehaviour
         nameText.fontStyle = FontStyles.Bold;
         nameText.color = new Color(0.90f, 0.88f, 0.92f, 1f); // M3 on-surface
         nameText.alignment = TextAlignmentOptions.BottomLeft;
+        nameText.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+        // nameText.overflowMode = TextOverflowModes.Ellipsis;
 
         // Subtitle
         var subtitleObj = new GameObject("Subtitle");
@@ -540,7 +728,7 @@ public class LeaderboardOverviewUI : MonoBehaviour
         }
         else
         {
-            // "No data" centered
+            // "No data" aligned to the right
             var noDataObj = new GameObject("NoData");
             noDataObj.transform.SetParent(statsContainerObj.transform, false);
 
@@ -554,7 +742,7 @@ public class LeaderboardOverviewUI : MonoBehaviour
             noDataText.text = "—";
             noDataText.fontSize = 20;
             noDataText.color = new Color(0.45f, 0.45f, 0.48f, 1f);
-            noDataText.alignment = TextAlignmentOptions.Center;
+            noDataText.alignment = TextAlignmentOptions.Right;
         }
 
         entryObjects.Add(entryObj);
