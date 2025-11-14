@@ -20,6 +20,18 @@ namespace Debug3.Patches
                 {
                     startUnlocks.Add("arrow");
                 }
+                if (!startUnlocks.Contains("colors"))
+                {
+                    startUnlocks.Add("colors");
+                }
+                if (!startUnlocks.Contains("custom"))
+                {
+                    startUnlocks.Add("custom");
+                }
+                if (!startUnlocks.Contains("reset_arrows"))
+                {
+                    startUnlocks.Add("reset_arrows");
+                }
             }
         }
     }

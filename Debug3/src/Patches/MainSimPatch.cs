@@ -8,10 +8,56 @@ namespace Debug3.Patches
     {
         private static List<DebugArrow> debugArrows = new List<DebugArrow>();
 
+        [HarmonyPatch(nameof(MainSim.GetUnlockedKeywords))]
+        [HarmonyPostfix]
+        public static void GetUnlockedKeywords_Postfix(ref HashSet<string> __result)
+        {
+            // Add colors constant and color names to autocomplete
+            __result.Add("colors");
+            __result.Add("red");
+            __result.Add("green");
+            __result.Add("blue");
+            __result.Add("yellow");
+            __result.Add("cyan");
+            __result.Add("magenta");
+            __result.Add("white");
+            __result.Add("black");
+            __result.Add("orange");
+            __result.Add("purple");
+            __result.Add("pink");
+            __result.Add("lime");
+            __result.Add("teal");
+            __result.Add("navy");
+            __result.Add("maroon");
+            __result.Add("olive");
+            __result.Add("silver");
+            __result.Add("gray");
+            __result.Add("custom");
+            __result.Add("wrap");
+            __result.Add("arrow");
+            __result.Add("reset_arrows");
+        }
+
         public static void AddDebugArrow(DebugArrow arrow)
         {
-            // Remove any existing arrow at this position first
-            debugArrows.RemoveAll(a => a.x == arrow.x && a.y == arrow.y);
+            if (arrow.hasDirection)
+            {
+                // Remove only arrows at same position with same direction
+                debugArrows.RemoveAll(a => a.x == arrow.x && a.y == arrow.y && a.hasDirection && a.direction == arrow.direction);
+            }
+            else
+            {
+                // For arrows without direction (None), remove all arrows at that position
+                debugArrows.RemoveAll(a => a.x == arrow.x && a.y == arrow.y);
+            }
+            // Add the new arrow
+            debugArrows.Add(arrow);
+        }
+
+        public static void AddDebugArrowOverlapping(DebugArrow arrow)
+        {
+            // For iterable directions, remove only the same direction at same position
+            debugArrows.RemoveAll(a => a.x == arrow.x && a.y == arrow.y && a.hasDirection && a.direction == arrow.direction);
             // Add the new arrow
             debugArrows.Add(arrow);
         }
