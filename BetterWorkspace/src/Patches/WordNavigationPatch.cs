@@ -162,4 +162,153 @@ public static class WordNavigationPatch
         __result = Mathf.Max(0, pos);
         return false; // Skip original method
     }
+
+    // Intercept Ctrl+Backspace in OnUpdateSelected (where text input is processed)
+    [HarmonyPrefix]
+    [HarmonyPatch("OnUpdateSelected")]
+    [HarmonyPriority(Priority.First)]
+    static bool OnUpdateSelected_CtrlBackspace(CodeInputField __instance, UnityEngine.EventSystems.BaseEventData eventData)
+    {
+        if (!__instance.isFocused)
+            return true;
+
+        // Check for Ctrl+Backspace
+        bool ctrlPressed = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        bool backspacePressed = Input.GetKeyDown(KeyCode.Backspace);
+
+        if (ctrlPressed && backspacePressed)
+        {
+            DeletePreviousWord(__instance);
+            return false; // Block the default behavior completely
+        }
+
+        return true;
+    }
+
+    private static void DeletePreviousWord(CodeInputField inputField)
+    {
+        var stringPositionField = AccessTools.Property(typeof(CodeInputField), "stringPositionInternal");
+        var stringSelectPositionField = AccessTools.Property(typeof(CodeInputField), "stringSelectPositionInternal");
+
+        int stringPosition = (int)stringPositionField.GetValue(inputField);
+        int stringSelectPosition = (int)stringSelectPositionField.GetValue(inputField);
+
+        string text = inputField.text;
+
+        // If there's a selection, just delete it (standard behavior)
+        if (stringPosition != stringSelectPosition)
+        {
+            int selectionStart = Mathf.Min(stringPosition, stringSelectPosition);
+            int selectionEnd = Mathf.Max(stringPosition, stringSelectPosition);
+
+            string newText = text.Substring(0, selectionStart) + text.Substring(selectionEnd);
+            inputField.text = newText;
+
+            stringPositionField.SetValue(inputField, selectionStart);
+            stringSelectPositionField.SetValue(inputField, selectionStart);
+
+            inputField.ForceLabelUpdate();
+            ClickSelectionPatch.ForceCaretUpdate(inputField);
+            return;
+        }
+
+        // No selection - delete previous word
+        if (stringPosition <= 0)
+            return;
+
+        int pos = stringPosition;
+
+        // VSCode Ctrl+Backspace behavior:
+        // 1. If cursor is after whitespace, delete the whitespace first
+        // 2. Then delete the word/punctuation before it
+        // This matches VSCode's two-phase deletion
+
+        // Move back one position to look at what's before the cursor
+        pos--;
+
+        char currentChar = pos >= 0 && pos < text.Length ? text[pos] : '\0';
+
+        // Check if we're directly after a newline (no whitespace between)
+        if (pos >= 0 && text[pos] == '\n')
+        {
+            // Delete the newline
+            string newText = text.Substring(0, pos) + text.Substring(stringPosition);
+            inputField.text = newText;
+
+            stringPositionField.SetValue(inputField, pos);
+            stringSelectPositionField.SetValue(inputField, pos);
+
+            inputField.ForceLabelUpdate();
+            ClickSelectionPatch.ForceCaretUpdate(inputField);
+            return;
+        }
+
+        // Phase 1: Skip trailing whitespace (spaces/tabs only, not newlines)
+        while (pos >= 0 && (text[pos] == ' ' || text[pos] == '\t'))
+        {
+            pos--;
+        }
+
+        // If we're at the start of file, delete just the whitespace
+        if (pos < 0)
+        {
+            string newText = text.Substring(stringPosition);
+            inputField.text = newText;
+
+            stringPositionField.SetValue(inputField, 0);
+            stringSelectPositionField.SetValue(inputField, 0);
+
+            inputField.ForceLabelUpdate();
+            ClickSelectionPatch.ForceCaretUpdate(inputField);
+            return;
+        }
+
+        // If we hit a newline after skipping whitespace, stop at the whitespace (don't delete newline)
+        if (pos >= 0 && text[pos] == '\n')
+        {
+            // Delete only from after the newline to cursor (just the whitespace)
+            int deleteStart = pos + 1;
+            string newText = text.Substring(0, deleteStart) + text.Substring(stringPosition);
+            inputField.text = newText;
+
+            stringPositionField.SetValue(inputField, deleteStart);
+            stringSelectPositionField.SetValue(inputField, deleteStart);
+
+            inputField.ForceLabelUpdate();
+            ClickSelectionPatch.ForceCaretUpdate(inputField);
+            return;
+        }
+
+        // Phase 2: Now delete the word or punctuation
+        currentChar = text[pos];
+
+        if (IsWordChar(currentChar))
+        {
+            // Delete word characters
+            while (pos > 0 && IsWordChar(text[pos - 1]))
+            {
+                pos--;
+            }
+        }
+        else
+        {
+            // Delete punctuation characters
+            while (pos > 0 && !IsWordChar(text[pos - 1]) && !char.IsWhiteSpace(text[pos - 1]))
+            {
+                pos--;
+            }
+        }
+
+        int deleteStartPos = Mathf.Max(0, pos);
+
+        // Delete from deleteStartPos to stringPosition
+        string resultText = text.Substring(0, deleteStartPos) + text.Substring(stringPosition);
+        inputField.text = resultText;
+
+        stringPositionField.SetValue(inputField, deleteStartPos);
+        stringSelectPositionField.SetValue(inputField, deleteStartPos);
+
+        inputField.ForceLabelUpdate();
+        ClickSelectionPatch.ForceCaretUpdate(inputField);
+    }
 }
